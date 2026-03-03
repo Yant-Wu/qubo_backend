@@ -1,0 +1,80 @@
+# database.py — SQLAlchemy models & DB 連接（單一職責：資料模型與 ORM 設定）
+from __future__ import annotations
+
+import json
+from datetime import datetime
+from typing import Generator, Optional
+
+from sqlalchemy import JSON, Boolean, Column, DateTime, Float, ForeignKey, Integer, String, create_engine
+from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+
+from config import DATABASE_URL
+
+
+# 建立 Base class
+class Base(DeclarativeBase):
+    pass
+
+
+# ============ Models ============
+class Job(Base):
+    __tablename__ = "jobs"
+
+    id = Column(String(36), primary_key=True)  # UUID
+    task_name = Column(String(255), nullable=False)
+    problem_type = Column(String(50), nullable=False)  # TSP, MaxCut, Knapsack
+    n_variables = Column(Integer, nullable=False)
+    solver_backend = Column(String(50), nullable=False)  # exact, simulated_annealing, quantum_annealing
+    core_limit = Column(Integer, nullable=True)  # Optional
+    problem_data = Column(JSON, nullable=False)  # e.g. {"generation_method": "random", "seed": 42}
+    status = Column(String(20), default="pending", nullable=False)  # pending, running, completed, failed
+    error_message = Column(String(1000), nullable=True)  # Optional: error details
+    computation_time_ms = Column(Float, nullable=True)   # 實際計算時間（ms）
+    t_start = Column(Float, nullable=True)               # SA 初始溫度
+    t_end = Column(Float, nullable=True)                 # SA 終止溫度
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class JobHistory(Base):
+    __tablename__ = "job_history"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    job_id = Column(String(36), ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False)
+    iteration = Column(Integer, nullable=False)
+    value = Column(Float, nullable=False)
+    entropy = Column(Float, nullable=True)   # AEQTS Q-bit 族群 entropy
+    is_feasible = Column(Boolean, nullable=True)  # 該迭代的最佳解是否滿足約束
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+# ============ Engine & Session ============
+def get_engine():
+    """Create database engine."""
+    # SQLite 需要創建目錄
+    if DATABASE_URL.startswith("sqlite"):
+        db_path = DATABASE_URL.replace("sqlite:///./", "").replace("sqlite://", "")
+        db_dir = db_path.rsplit("/", 1)[0]
+        from pathlib import Path
+        Path(db_dir).mkdir(parents=True, exist_ok=True)
+
+    return create_engine(DATABASE_URL, echo=False, connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {})
+
+
+engine = get_engine()
+SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
+
+
+def init_db():
+    """初始化資料庫表（首次運行時執行）。"""
+    Base.metadata.create_all(bind=engine)
+    print("✓ Database tables initialized")
+
+
+def get_db() -> Generator[Session, None, None]:
+    """Dependency for FastAPI to get DB session."""
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
