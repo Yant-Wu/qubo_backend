@@ -18,6 +18,7 @@ _PROBLEM_TYPE_MAP: Dict[str, str] = {
     "maxcut": "max_cut",
     "MaxCut": "max_cut",
     "max_cut": "max_cut",
+    "custom": "custom",
 }
 
 
@@ -112,12 +113,13 @@ def _simulate_job(db: Session, job: Job):
             f"problem_type '{job.problem_type}' 目前不支援真實計算"
         )
 
-    # --- 2. 展開 problem_data，先提取使用者読入的參數 ---
+    # --- 2. 展開 problem_data，先提取使用者讀入的參數 ---
     raw: Dict[str, Any] = dict(job.problem_data) if job.problem_data else {}
     # 在 raw 被 generate_random_problem_data 替換前，先存下 AEQTS 參數
     user_num_iterations = raw.get("num_iterations")   # 前端傳入的 Iterations
     user_timeout        = raw.get("timeout_seconds")   # 前端傳入的執行時限（秒）
-    if raw.get("generation_method") == "random":
+    # custom 類型：Q_matrix 直接在 problem_data 中，不需隨機生成
+    if qubo_type != "custom" and raw.get("generation_method") == "random":
         n_vars = int(raw.get("n_variables") or job.n_variables)
         seed = raw.get("seed")
         raw = generate_random_problem_data(

@@ -37,6 +37,13 @@ class HistoryPointCreate(BaseModel):
 
 
 # ============ 問題資料 ============
+class KnapsackItemData(BaseModel):
+    """背包問題的單一物品。"""
+    name: str
+    weight: float
+    value: float
+
+
 class ProblemData(BaseModel):
     """問題參數。"""
     generation_method: str = "random"  # random, upload
@@ -46,6 +53,10 @@ class ProblemData(BaseModel):
     num_iterations: Optional[int] = Field(default=None, ge=1, description="AEQTS 迭代次數")
     timeout_seconds: Optional[float] = Field(default=None, gt=0, description="執行時限（秒）")
     Q_matrix: Optional[List[List[float]]] = Field(default=None, description="自訂 QUBO 矩陣（custom 類型）")
+    # Knapsack 問題前端表單紀錄（供「套用此設定」還原用）
+    items: Optional[List[KnapsackItemData]] = Field(default=None, description="Knapsack 物品清單")
+    capacity: Optional[float] = Field(default=None, description="Knapsack 容量")
+    penalty: Optional[float] = Field(default=None, description="Knapsack 懲罰係數")
 
 
 # ============ Job CRUD ============
