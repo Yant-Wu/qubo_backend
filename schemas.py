@@ -44,7 +44,7 @@ class ProblemData(BaseModel):
     filename: Optional[str] = None
     n_variables: Optional[int] = Field(default=None, ge=1, description="隨機生成時的變數數量（物品數 / 節點數）")
     num_iterations: Optional[int] = Field(default=None, ge=1, description="AEQTS 迭代次數")
-    num_runs: Optional[int] = Field(default=None, ge=1, description="重覆執行次數")
+    timeout_seconds: Optional[float] = Field(default=None, gt=0, description="執行時限（秒）")
 
 
 # ============ Job CRUD ============

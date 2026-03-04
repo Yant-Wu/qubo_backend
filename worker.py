@@ -116,7 +116,7 @@ def _simulate_job(db: Session, job: Job):
     raw: Dict[str, Any] = dict(job.problem_data) if job.problem_data else {}
     # 在 raw 被 generate_random_problem_data 替換前，先存下 AEQTS 參數
     user_num_iterations = raw.get("num_iterations")   # 前端傳入的 Iterations
-    user_num_runs       = raw.get("num_runs")          # 前端傳入的 Num Reads
+    user_timeout        = raw.get("timeout_seconds")   # 前端傳入的執行時限（秒）
     if raw.get("generation_method") == "random":
         n_vars = int(raw.get("n_variables") or job.n_variables)
         seed = raw.get("seed")
@@ -143,19 +143,22 @@ def _simulate_job(db: Session, job: Job):
         num_iterations = max(5000, n * 500)
     else:
         num_iterations = max(1000, n * 100)
-    # 執行次數：優先用使用者輸入，否則依 solver_backend 預設
-    if user_num_runs:
-        num_runs = int(user_num_runs)
+    # 執行時限：優先用使用者輸入，否則依 solver_backend 預設
+    if user_timeout:
+        timeout_secs = float(user_timeout)
     elif job.solver_backend == "exact":
-        num_runs = 5
+        timeout_secs = 60.0
     elif job.solver_backend == "quantum_annealing":
-        num_runs = 3
+        timeout_secs = 120.0
     else:
-        num_runs = 1
+        timeout_secs = 30.0
 
+    import time as _time
+    run_start = _time.time()
     best_result = None
     best_energy = float("inf")
-    for run in range(num_runs):
+    run = 0
+    while True:
         result = aeqts_solver(
             Q=Q,
             num_iterations=num_iterations,
@@ -164,9 +167,13 @@ def _simulate_job(db: Session, job: Job):
             feasibility_checker=feasibility_checker,
             objective_fn=objective_fn,
         )
+        run += 1
         if result["energy"] < best_energy:
             best_energy = result["energy"]
             best_result = result
+        # 至少跨一次，超過時限就停止
+        if (_time.time() - run_start) >= timeout_secs:
+            break
 
     # --- 5. 將 objective + entropy + is_feasible 歷史寫入 JobHistory ---
     for point in best_result["history"]:

@@ -36,6 +36,7 @@ async def lifespan(app: FastAPI):
             "interval",
             seconds=WORKER_CHECK_INTERVAL,
             id="process_jobs",
+            max_instances=2,  # 允許最多 2 個並行實例，避免長任務期間 skip warning
         )
         scheduler.start()
         print(f"✓ Background scheduler started (check interval: {WORKER_CHECK_INTERVAL}s)")
