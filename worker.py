@@ -131,27 +131,13 @@ def _simulate_job(db: Session, job: Job):
     feasibility_checker = _make_feasibility_checker(qubo_type, raw)
     objective_fn = _make_objective_fn(qubo_type, raw)
 
-    # --- 4. 依 solver_backend 決定求解參數（AEQTS）---
+    # --- 4. 決定求解參數（AEQTS / simulated_annealing）---
     n = Q.shape[0]
     N = int(job.core_limit or 50)          # 鄰域大小（前端 Neighbors N）
-    # 迭代次數：優先用使用者輸入，否則依 solver_backend 自動推算
-    if user_num_iterations:
-        num_iterations = int(user_num_iterations)
-    elif job.solver_backend == "exact":
-        num_iterations = max(2000, n * 200)
-    elif job.solver_backend == "quantum_annealing":
-        num_iterations = max(5000, n * 500)
-    else:
-        num_iterations = max(1000, n * 100)
-    # 執行時限：優先用使用者輸入，否則依 solver_backend 預設
-    if user_timeout:
-        timeout_secs = float(user_timeout)
-    elif job.solver_backend == "exact":
-        timeout_secs = 60.0
-    elif job.solver_backend == "quantum_annealing":
-        timeout_secs = 120.0
-    else:
-        timeout_secs = 30.0
+    # 迭代次數：優先用使用者輸入，否則依問題規模自動推算
+    num_iterations = int(user_num_iterations) if user_num_iterations else max(1000, n * 100)
+    # 執行時限：優先用使用者輸入，否則預設 30 秒
+    timeout_secs = float(user_timeout) if user_timeout else 30.0
 
     import time as _time
     run_start = _time.time()
