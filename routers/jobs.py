@@ -16,6 +16,7 @@ from schemas import (
     JobCreateRequest,
     JobDetail,
     JobListItem,
+    SolveAndCreateResponse,
     StatusUpdate,
 )
 
@@ -104,4 +105,62 @@ async def add_history(
     return ApiResponse(
         data={"added": len(req.points)},
         message=f"Added {len(req.points)} history point(s)",
+    )
+
+
+# ===== 7. POST /api/jobs/solve =====
+@router.post("/solve", response_model=ApiResponse[SolveAndCreateResponse], status_code=201)
+async def solve_and_create(req: JobCreateRequest, db: Session = Depends(get_db)):
+    """
+    統一求解端點（同步執行）：建立 Job → AEQTS 求解 → 儲存收斂歷史 → 回傳 job_id 與求解結果。
+    前端只需呼叫一次，SolveResultPanel 與 QuboMonitorPanel 使用同一份資料。
+    """
+    from database import Job as JobModel
+    from worker import _simulate_job
+
+    job_id = str(uuid.uuid4())
+    job_orm = JobModel(
+        id=job_id,
+        task_name=req.task_name,
+        problem_type=req.problem_type,
+        n_variables=req.n_variables,
+        solver_backend=req.solver_backend,
+        core_limit=req.core_limit,
+        problem_data=req.problem_data.model_dump(),
+        status="running",
+    )
+    db.add(job_orm)
+    db.commit()
+    db.refresh(job_orm)
+
+    try:
+        best_result = _simulate_job(db, job_orm)
+        job_orm.status = "completed"
+        db.commit()
+    except Exception as exc:
+        job_orm.status = "failed"
+        job_orm.error_message = str(exc)
+        db.commit()
+        raise HTTPException(status_code=500, detail=f"求解失敗: {exc}") from exc
+
+    # 建立 interpretation（selected_items / total_value / total_weight）
+    raw_items = req.problem_data.items or []
+    solution = best_result.get("solution", [])
+    selected = [
+        {"name": it.name, "weight": it.weight, "value": it.value}
+        for it, xi in zip(raw_items, solution)
+        if xi
+    ]
+
+    return ApiResponse(
+        data=SolveAndCreateResponse(
+            job_id=job_id,
+            energy=best_result["energy"],
+            selected_items=selected,
+            total_value=sum(float(it["value"]) for it in selected),
+            total_weight=sum(float(it["weight"]) for it in selected),
+            computation_time_ms=best_result["computation_time_ms"],
+            device=best_result.get("device", "cpu"),
+        ),
+        message="Job solved and created successfully",
     )

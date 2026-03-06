@@ -108,6 +108,7 @@ def _job_to_detail(db: Session, job: Job) -> JobDetail:
         computation_time_ms=job.computation_time_ms,
         t_start=job.t_start,
         t_end=job.t_end,
+        compute_device=job.compute_device,
         created_at=job.created_at,
         updated_at=job.updated_at,
     )

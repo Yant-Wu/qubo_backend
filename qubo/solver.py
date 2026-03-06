@@ -1,62 +1,80 @@
-"""AEQTS 量子啟發演化求解器"""
+"""AEQTS 量子啟發演化求解器（自動偵測 CUDA GPU / CPU fallback）"""
 import time
 from math import sqrt
 from typing import Callable, Dict, Any, Optional
 
 import numpy as np
 
+# ── GPU 自動偵測 ──────────────────────────────────────────────────
+try:
+    import cupy as cp
+    _GPU_AVAILABLE: bool = cp.cuda.is_available()
+except Exception:
+    cp = None
+    _GPU_AVAILABLE = False
 
 
-def _measure(qindividuals) -> "Any":
-    """量子測量：將 Q-bit 族群崩縮為 0/1 古典解。"""
-    probs = qindividuals[:, 1] ** 2          # |β|² 為 |1⟩ 的機率
-    return (np.random.rand(len(qindividuals)) < probs).astype(float)
+def _xp(use_gpu: bool):
+    """回傳 cupy 或 numpy 模組。"""
+    return cp if (use_gpu and _GPU_AVAILABLE) else np
 
 
-def _gen_nbrs(qindividuals, N: int):
-    """生成 N 個鄰居解（量子測量 N 次）。"""
-    return [_measure(qindividuals) for _ in range(N)]
+def _to_np(arr, xp) -> np.ndarray:
+    """GPU array → CPU numpy（CPU 時直接 asarray）。"""
+    return arr.get() if xp is not np else np.asarray(arr)
 
 
-def _evaluate(neighbours, Q):
-    """對所有鄰居計算 QUBO 能量並由低到高排序。"""
-    energies = [float(s @ Q @ s) for s in neighbours]
-    return [neighbours[i] for i in np.argsort(energies)]
-
-
-def _update_qbits(neighbours, qindividuals, N: int, theta_scale: float = 0.01):
-    """
-    量子旋轉更新：根據最佳/最差鄰居調整 Q-bit 轉動角。
-
-    使用排名加權旋轉角（rank-based theta），sign 依 α·β 決定方向。
-    """
-    num_pairs = N // 2
-    best_group  = np.array(neighbours[:num_pairs])
-    worst_group = np.array(neighbours[N - 1: N - num_pairs - 1: -1])
-
-    diff     = best_group - worst_group                          # (num_pairs, n)
-    ranks    = np.arange(1, num_pairs + 1).reshape(-1, 1)
-    thetas   = np.sum(diff * (theta_scale * np.pi / ranks), axis=0)
-
-    alpha, beta = qindividuals[:, 0], qindividuals[:, 1]
-    sign   = np.where((alpha * beta) < 0, -1.0, 1.0)
-    thetas = thetas * sign
-
-    c, s = np.cos(thetas), np.sin(thetas)
-    qindividuals[:, 0] = alpha * c - beta * s
-    qindividuals[:, 1] = alpha * s + beta * c
-    return qindividuals
-
-
-def _entropy(qindividuals) -> float:
+def _entropy(alpha, beta, xp) -> float:
     """計算 Q-bit 族群平均 von Neumann entropy。"""
-    p0 = qindividuals[:, 0] ** 2
-    p1 = qindividuals[:, 1] ** 2
-    p0_safe = np.where(p0 == 0, 1e-9, p0)
-    p1_safe = np.where(p1 == 0, 1e-9, p1)
-    entropy = -(p0 * np.log2(p0_safe) + p1 * np.log2(p1_safe))
-    entropy = np.where((p0 == 0) | (p1 == 0), 0.0, entropy)
-    return float(np.mean(entropy))
+    p0 = alpha ** 2
+    p1 = beta  ** 2
+    p0_s = xp.where(p0 == 0, 1e-9, p0)
+    p1_s = xp.where(p1 == 0, 1e-9, p1)
+    ent  = -(p0 * xp.log2(p0_s) + p1 * xp.log2(p1_s))
+    ent  = xp.where((p0 == 0) | (p1 == 0), 0.0, ent)
+    return float(xp.mean(ent))
+
+
+def _gen_nbrs(beta, N: int, xp):
+    """
+    向量化生成 N 個鄰居解，形狀 (N, n)。
+    對應 test.cu gen_neighbours_kernel：機率 = |β|²。
+    """
+    probs = beta ** 2                              # (n,)
+    rnd   = xp.random.rand(N, beta.shape[0])       # (N, n)
+    return (rnd < probs[xp.newaxis, :]).astype(xp.float64)
+
+
+def _evaluate(neighbours, Q_dev, xp):
+    """
+    向量化計算 N 個鄰居的 QUBO 能量，返回排序索引與能量陣列。
+    energy[i] = neigh[i] @ Q @ neigh[i]
+    對應 test.cu energy_kernel + Thrust sort_by_key。
+    """
+    energies = (neighbours @ Q_dev * neighbours).sum(axis=1)  # (N,)
+    return xp.argsort(energies), energies
+
+
+def _update_qbits(neighbours, sorted_idx, N: int,
+                  alpha, beta, theta_scale: float, xp):
+    """
+    量子旋轉更新（rank-based theta）。
+    對應 test.cu updateQ_pairs_kernel。
+    """
+    num_pairs  = N // 2
+    ranks      = xp.arange(1, num_pairs + 1, dtype=xp.float64).reshape(-1, 1)
+    base_theta = theta_scale * xp.pi / ranks             # (num_pairs, 1)
+
+    best_idx  = sorted_idx[:num_pairs]
+    worst_idx = sorted_idx[N - 1: N - num_pairs - 1: -1]
+
+    diff = neighbours[best_idx] - neighbours[worst_idx]  # (num_pairs, n)
+    raw  = (diff * base_theta).sum(axis=0)               # (n,)
+
+    sign   = xp.where(alpha * beta < 0, -1.0, 1.0)
+    thetas = raw * sign
+    c, s   = xp.cos(thetas), xp.sin(thetas)
+    return alpha * c - beta * s, alpha * s + beta * c
 
 
 # ─────────────────────────────────────────────
@@ -70,75 +88,84 @@ def aeqts_solver(
     seed: Optional[int] = None,
     feasibility_checker: Optional[Callable[[np.ndarray], bool]] = None,
     objective_fn: Optional[Callable[[np.ndarray], float]] = None,
+    use_gpu: bool = True,
 ) -> Dict[str, Any]:
     """
     AEQTS（Adaptive Evolutionary Quantum-inspired Tabu Search）求解器。
+    自動偵測 CUDA GPU，無 GPU 時 fallback 至 CPU numpy。
 
     Args:
-        Q            : QUBO 矩陣 (n×n，上三角或對稱皆可)
-        num_iterations: 演化迭代次數
-        N            : 每代鄰居數（對應原始碼中的 N_list）
-        seed         : 隨機種子
+        Q             : QUBO 矩陣 (n×n，對稱)
+        num_iterations: 最大迭代次數
+        N             : 每代鄰居數（對應原始碼的 N_list）
+        seed          : 隨機種子
         feasibility_checker: f(x) → bool，判斷解是否滿足約束
-        objective_fn : f(x) → float，計算真實目標値（如背包總價値）。
-                       若為 None 則以 QUBO 能量代替。
+        objective_fn  : f(x) → float，計算真實目標値；None 則用 QUBO 能量
+        use_gpu       : True = 嘗試 GPU（無 GPU 自動 fallback CPU）
 
     Returns:
         {
-          "solution"          : 最優 0/1 解,
-          "energy"            : 最低 QUBO 能量,
-          "history"           : 每個 checkpoint 的能量紀錄,
-          "computation_time_ms": 計算時間 (ms)
+          "solution"           : 最優 0/1 解,
+          "energy"             : 最低 QUBO 能量,
+          "history"            : 每個 checkpoint 的能量紀錄,
+          "computation_time_ms": 計算時間 (ms),
+          "device"             : "gpu" 或 "cpu"
         }
     """
+    xp     = _xp(use_gpu)
+    device = "gpu" if (xp is not np) else "cpu"
+
     if seed is not None:
         np.random.seed(seed)
+        if xp is not np:
+            xp.random.seed(seed)
 
     start_time = time.time()
 
-    # theta_list 同原始腳本：0.01 ~ 0.10，每次 run 隨機抽一個
-    _theta_list = np.round(np.arange(0.01, 0.11, 0.01), 2).tolist()
+    # theta 同原始腳本：0.01 ~ 0.10，每次 run 隨機抽一個
+    _theta_list   = np.round(np.arange(0.01, 0.11, 0.01), 2).tolist()
     current_theta = float(np.random.choice(_theta_list))
 
-    Q_dev = np.asarray(Q)
-    n = Q_dev.shape[0]
+    Q_dev = xp.asarray(Q)
+    n     = Q_dev.shape[0]
 
     # ── 初始化 Q-bits：α = β = 1/√2 ──────────────────────────
-    qindividuals = np.full((n, 2), 1.0 / sqrt(2))
+    val   = 1.0 / sqrt(2)
+    alpha = xp.full(n, val, dtype=xp.float64)
+    beta  = xp.full(n, val, dtype=xp.float64)
 
     # ── 初始鄰居評估 ─────────────────────────────────────────
-    init_nbrs   = _gen_nbrs(qindividuals, N)
-    init_sorted = _evaluate(init_nbrs, Q_dev)
-    global_best_sol    = init_sorted[0].copy()
-    global_best_energy = float(global_best_sol @ Q_dev @ global_best_sol)
+    nbrs_init    = _gen_nbrs(beta, N, xp)
+    sidx_init, _ = _evaluate(nbrs_init, Q_dev, xp)
+    best_sol     = nbrs_init[sidx_init[0]].copy()
+    best_energy  = float((best_sol @ Q_dev) @ best_sol)
 
     # ── 歷史記錄間隔 ─────────────────────────────────────────
-    record_interval = max(1, num_iterations // 100)
-    history = []
+    record_interval   = max(1, num_iterations // 100)
+    history: list     = []
+    ENTROPY_THRESHOLD = 0.02
 
     # ── 主迭代 ───────────────────────────────────────────────
-    ENTROPY_THRESHOLD = 0.02
     for it in range(num_iterations):
-        current_entropy = _entropy(qindividuals)
+        current_entropy = _entropy(alpha, beta, xp)
 
-        nbrs         = _gen_nbrs(qindividuals, N)
-        nbrs_sorted  = _evaluate(nbrs, Q_dev)
-        current_best = nbrs_sorted[0]
-        current_energy = float(current_best @ Q_dev @ current_best)
+        nbrs      = _gen_nbrs(beta, N, xp)
+        sidx, eng = _evaluate(nbrs, Q_dev, xp)
+        this_energy = float(eng[sidx[0]])
 
-        if current_energy < global_best_energy:
-            global_best_energy = current_energy
-            global_best_sol    = current_best.copy()
+        if this_energy < best_energy:
+            best_energy = this_energy
+            best_sol    = nbrs[sidx[0]].copy()
 
-        qindividuals = _update_qbits(nbrs_sorted, qindividuals, N, current_theta)
+        alpha, beta = _update_qbits(nbrs, sidx, N, alpha, beta, current_theta, xp)
 
         if it % record_interval == 0:
-            sol_np = np.asarray(global_best_sol)
+            sol_np = _to_np(best_sol, xp)
             is_feasible = bool(feasibility_checker(sol_np)) if feasibility_checker else None
-            obj_val = float(objective_fn(sol_np)) if objective_fn else global_best_energy
+            obj_val     = float(objective_fn(sol_np)) if objective_fn else best_energy
             history.append({
                 "iteration"  : it,
-                "energy"     : global_best_energy,
+                "energy"     : best_energy,
                 "objective"  : obj_val,
                 "entropy"    : current_entropy,
                 "is_feasible": is_feasible,
@@ -149,24 +176,25 @@ def aeqts_solver(
             break
 
     # ── 最後一次記錄 ─────────────────────────────────────────
-    sol_np_final = np.asarray(global_best_sol)
+    sol_np_final      = _to_np(best_sol, xp)
     is_feasible_final = bool(feasibility_checker(sol_np_final)) if feasibility_checker else None
-    obj_val_final = float(objective_fn(sol_np_final)) if objective_fn else global_best_energy
+    obj_val_final     = float(objective_fn(sol_np_final)) if objective_fn else best_energy
     history.append({
         "iteration"  : num_iterations,
-        "energy"     : global_best_energy,
+        "energy"     : best_energy,
         "objective"  : obj_val_final,
-        "entropy"    : _entropy(qindividuals),
+        "entropy"    : _entropy(alpha, beta, xp),
         "is_feasible": is_feasible_final,
     })
 
     computation_time_ms = (time.time() - start_time) * 1000
 
     return {
-        "solution"           : np.asarray(global_best_sol).astype(int).tolist(),
-        "energy"             : global_best_energy,
+        "solution"           : np.asarray(sol_np_final).astype(int).tolist(),
+        "energy"             : best_energy,
         "history"            : history,
         "computation_time_ms": round(computation_time_ms, 2),
+        "device"             : device,
     }
 
 

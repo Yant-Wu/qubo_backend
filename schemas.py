@@ -40,8 +40,8 @@ class HistoryPointCreate(BaseModel):
 class KnapsackItemData(BaseModel):
     """背包問題的單一物品。"""
     name: str
-    weight: float
-    value: float
+    weight: float = Field(..., ge=0, description="物品重量（不可為負）")
+    value: float  = Field(..., ge=0, description="物品價值（不可為負）")
 
 
 class ProblemData(BaseModel):
@@ -55,8 +55,8 @@ class ProblemData(BaseModel):
     Q_matrix: Optional[List[List[float]]] = Field(default=None, description="自訂 QUBO 矩陣（custom 類型）")
     # Knapsack 問題前端表單紀錄（供「套用此設定」還原用）
     items: Optional[List[KnapsackItemData]] = Field(default=None, description="Knapsack 物品清單")
-    capacity: Optional[float] = Field(default=None, description="Knapsack 容量")
-    penalty: Optional[float] = Field(default=None, description="Knapsack 懲罰係數")
+    capacity: Optional[float] = Field(default=None, gt=0, description="Knapsack 容量（必須 > 0）")
+    penalty: Optional[float] = Field(default=None, gt=0, description="Knapsack 懲罰係數（必須 > 0，否則約束無效）")
 
 
 # ============ Job CRUD ============
@@ -66,7 +66,7 @@ class JobCreateRequest(BaseModel):
     problem_type: str  # TSP, MaxCut, Knapsack
     n_variables: int = Field(..., ge=1)
     solver_backend: str  # exact, simulated_annealing, quantum_annealing
-    core_limit: Optional[int] = Field(default=None, ge=1)   # AEQTS 鄰域大小 N（最小 1）
+    core_limit: Optional[int] = Field(default=None, ge=2)   # AEQTS 鄰域大小 N（最小 2，需能配成至少一對）
     problem_data: ProblemData = Field(default_factory=ProblemData)
 
 
@@ -93,6 +93,7 @@ class JobDetail(BaseModel):
     computation_time_ms: Optional[float] = None  # 實際計算時間
     t_start: Optional[float] = None              # AEQTS 鄰域大小 N
     t_end: Optional[float] = None                # AEQTS 迭代次數
+    compute_device: Optional[str] = None         # 'gpu' 或 'cpu'
 
     created_at: datetime
     updated_at: datetime
@@ -103,3 +104,15 @@ class StatusUpdate(BaseModel):
     """PATCH /api/jobs/{id}/status 的請求格式。"""
     status: str = Field(..., pattern="^(pending|running|completed|failed)$")
     error_message: Optional[str] = None
+
+
+# ============ 統一求解回應 ============
+class SolveAndCreateResponse(BaseModel):
+    """POST /api/jobs/solve 的回應：同步執行 AEQTS 後回傳 job_id + 背包求解結果。"""
+    job_id: str
+    energy: float
+    selected_items: List[dict]
+    total_value: float
+    total_weight: float
+    computation_time_ms: float
+    device: str = "cpu"

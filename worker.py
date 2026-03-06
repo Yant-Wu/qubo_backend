@@ -180,5 +180,7 @@ def _simulate_job(db: Session, job: Job):
     job.computation_time_ms = round(best_result["computation_time_ms"], 2)
     job.t_start = float(N)              # 儲存鄰域大小 N
     job.t_end = float(num_iterations)   # 儲存迭代次數
+    job.compute_device = best_result.get("device", "cpu")   # 'gpu' 或 'cpu'
     db.commit()
+    return best_result
 

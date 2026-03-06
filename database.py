@@ -5,7 +5,7 @@ import json
 from datetime import datetime
 from typing import Generator, Optional
 
-from sqlalchemy import JSON, Boolean, Column, DateTime, Float, ForeignKey, Integer, String, create_engine
+from sqlalchemy import JSON, Boolean, Column, DateTime, Float, ForeignKey, Integer, String, create_engine, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from config import DATABASE_URL
@@ -32,6 +32,7 @@ class Job(Base):
     computation_time_ms = Column(Float, nullable=True)   # 實際計算時間（ms）
     t_start = Column(Float, nullable=True)               # 鄰域大小 N
     t_end = Column(Float, nullable=True)                 # 迭代次數
+    compute_device = Column(String(10), nullable=True)   # 'gpu' 或 'cpu'
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
@@ -68,6 +69,13 @@ SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 def init_db():
     """初始化資料庫表（首次運行時執行）。"""
     Base.metadata.create_all(bind=engine)
+    # 安全地為舊資料庫補上 compute_device 欄位（已存在時忽略）
+    with engine.connect() as conn:
+        try:
+            conn.execute(text("ALTER TABLE jobs ADD COLUMN compute_device VARCHAR(10)"))
+            conn.commit()
+        except Exception:
+            pass  # 欄位已存在，忽略
     print("✓ Database tables initialized")
 
 
