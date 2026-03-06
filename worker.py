@@ -129,6 +129,9 @@ def _simulate_job(db: Session, job: Job):
         )
 
     # --- 3. 建立 QUBO 矩陣、可行性判斷函式、目標値函式 ---
+    # 相容處理：前端可能存 capacity，builder 需要 max_weight
+    if qubo_type == "knapsack" and "max_weight" not in raw and "capacity" in raw:
+        raw["max_weight"] = raw["capacity"]
     Q = build_qubo_matrix(problem_type=qubo_type, problem_data=raw)
     feasibility_checker = _make_feasibility_checker(qubo_type, raw)
     objective_fn = _make_objective_fn(qubo_type, raw)

@@ -91,8 +91,9 @@ class JobDetail(BaseModel):
     history_data: List[HistoryPoint] = []
     error_message: Optional[str] = None
     computation_time_ms: Optional[float] = None  # 實際計算時間
-    t_start: Optional[float] = None              # SA 初始溫度
-    t_end: Optional[float] = None                # SA 終止溫度
+    t_start: Optional[float] = None              # AEQTS 鄰域大小 N
+    t_end: Optional[float] = None                # AEQTS 迭代次數
+
     created_at: datetime
     updated_at: datetime
 

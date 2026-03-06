@@ -30,8 +30,8 @@ class Job(Base):
     status = Column(String(20), default="pending", nullable=False)  # pending, running, completed, failed
     error_message = Column(String(1000), nullable=True)  # Optional: error details
     computation_time_ms = Column(Float, nullable=True)   # 實際計算時間（ms）
-    t_start = Column(Float, nullable=True)               # SA 初始溫度
-    t_end = Column(Float, nullable=True)                 # SA 終止溫度
+    t_start = Column(Float, nullable=True)               # 鄰域大小 N
+    t_end = Column(Float, nullable=True)                 # 迭代次數
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
@@ -51,12 +51,12 @@ class JobHistory(Base):
 # ============ Engine & Session ============
 def get_engine():
     """Create database engine."""
-    # SQLite 需要創建目錄
-    if DATABASE_URL.startswith("sqlite"):
-        db_path = DATABASE_URL.replace("sqlite:///./", "").replace("sqlite://", "")
-        db_dir = db_path.rsplit("/", 1)[0]
+    # SQLite 需要確保目錄存在
+    # 格式：sqlite:///./relative/path.db 或 sqlite:////absolute/path.db
+    if DATABASE_URL.startswith("sqlite:///"):
         from pathlib import Path
-        Path(db_dir).mkdir(parents=True, exist_ok=True)
+        db_path = Path(DATABASE_URL[len("sqlite:///"):])  # 去掉 sqlite:/// 前綴
+        db_path.parent.mkdir(parents=True, exist_ok=True)
 
     return create_engine(DATABASE_URL, echo=False, connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {})
 

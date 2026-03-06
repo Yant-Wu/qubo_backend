@@ -1,8 +1,13 @@
 # main.py — FastAPI 應用初始化（單一職責：應用程式進入點）
+import logging
 import os
 import uvicorn
 from contextlib import asynccontextmanager
 from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.events import EVENT_JOB_ERROR
+
+logging.basicConfig(level=logging.INFO)
+_log = logging.getLogger(__name__)
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -31,6 +36,10 @@ async def lifespan(app: FastAPI):
     
     if WORKER_ENABLED:
         scheduler = BackgroundScheduler()
+        scheduler.add_listener(
+            lambda event: _log.error("[scheduler] job crashed: %s", event.exception, exc_info=event.traceback),
+            EVENT_JOB_ERROR,
+        )
         scheduler.add_job(
             process_pending_jobs,
             "interval",
@@ -39,7 +48,7 @@ async def lifespan(app: FastAPI):
             max_instances=2,  # 允許最多 2 個並行實例，避免長任務期間 skip warning
         )
         scheduler.start()
-        print(f"✓ Background scheduler started (check interval: {WORKER_CHECK_INTERVAL}s)")
+        _log.info("✓ Background scheduler started (check interval: %ss)", WORKER_CHECK_INTERVAL)
     
     yield  # 應用運行期間
     
