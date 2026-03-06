@@ -55,6 +55,10 @@ async def lifespan(app: FastAPI):
         scheduler.shutdown(wait=True)
         print("✓ Background scheduler stopped")
 
+    from routers.jobs import _solve_executor
+    _solve_executor.shutdown(wait=False)
+    print("✓ Solve thread pool stopped")
+
 
 # ============ FastAPI 應用初始化 ============
 app = FastAPI(
