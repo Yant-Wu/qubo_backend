@@ -97,10 +97,15 @@ if os.path.isdir(_DIST_DIR):
     if os.path.isdir(_assets_dir):
         app.mount("/assets", StaticFiles(directory=_assets_dir), name="assets")
 
+    _DIST_REAL = os.path.realpath(_DIST_DIR)
+
     @app.get("/{full_path:path}")
     async def serve_frontend(full_path: str):
         """SPA catch-all：將所有非 API 路徑導向 index.html。"""
-        file_path = os.path.join(_DIST_DIR, full_path)
+        # 防止路徑穿越攻擊：確保解析後的路徑仍在 dist 目錄內
+        file_path = os.path.realpath(os.path.join(_DIST_DIR, full_path))
+        if not file_path.startswith(_DIST_REAL + os.sep):
+            return FileResponse(os.path.join(_DIST_DIR, "index.html"))
         if os.path.isfile(file_path):
             return FileResponse(file_path)
         return FileResponse(os.path.join(_DIST_DIR, "index.html"))

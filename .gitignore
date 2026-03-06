@@ -1,3 +1,8 @@
+# 環境變數（含敏感設定，範本保留 .env.example）
+.env
+.env.local
+.env.*.local
+
 # Python-generated files
 __pycache__/
 *.py[oc]

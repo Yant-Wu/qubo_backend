@@ -6,9 +6,13 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Optional
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
+
+_log = logging.getLogger(__name__)
 
 # 最多允許 10 個求解任務並行（CPU/GPU bound，各佔一個 thread）
 _solve_executor = ThreadPoolExecutor(max_workers=10)
@@ -132,10 +136,12 @@ def _blocking_solve(job_id: str, job_data: dict) -> dict:
         db.commit()
         return best_result
     except Exception as exc:
+        _log.exception("[_blocking_solve] job %s error: %s", job_id, exc)
         job_orm = db.query(JobModel).filter(JobModel.id == job_id).first()
         if job_orm:
             job_orm.status = "failed"
-            job_orm.error_message = str(exc)
+            # 只保留簡短型別訊息，避免內部路徑/堆疊資訊外洩
+            job_orm.error_message = type(exc).__name__
             db.commit()
         raise
     finally:
@@ -176,7 +182,8 @@ async def solve_and_create(req: JobCreateRequest, db: Session = Depends(get_db))
             req.problem_data.model_dump(),
         )
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"求解失敗: {exc}") from exc
+        _log.exception("[solve] job %s failed: %s", job_id, exc)
+        raise HTTPException(status_code=500, detail="求解過程發生錯誤，請稍後再試") from exc
 
     # 建立 interpretation（selected_items / total_value / total_weight）
     raw_items = req.problem_data.items or []

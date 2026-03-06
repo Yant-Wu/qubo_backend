@@ -12,9 +12,9 @@ if env_path.exists():
 # Database
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./database/qubo.db")
 
-# CORS
-_cors_raw = os.getenv("CORS_ORIGINS", "*")
-CORS_ORIGINS = ["*"] if _cors_raw == "*" else _cors_raw.split(",")
+# CORS（預設只允許本機開發端口，正式部署請透過環境變數設定）
+_cors_raw = os.getenv("CORS_ORIGINS", "http://localhost:5173,http://localhost:3000")
+CORS_ORIGINS = ["*"] if _cors_raw == "*" else [o.strip() for o in _cors_raw.split(",")]
 
 # Worker 設定
 WORKER_ENABLED = os.getenv("WORKER_ENABLED", "true").lower() == "true"
@@ -23,4 +23,4 @@ WORKER_CHECK_INTERVAL = int(os.getenv("WORKER_CHECK_INTERVAL", "2"))  # 秒
 # Server
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8000"))
-RELOAD = os.getenv("RELOAD", "true").lower() == "true"
+RELOAD = os.getenv("RELOAD", "false").lower() == "true"  # 生產環境應關閉
