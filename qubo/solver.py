@@ -1,11 +1,98 @@
-"""AEQTS 量子啟發演化求解器（自動偵測 CUDA GPU / CPU fallback）"""
+"""AEQTS 求解器：優先呼叫 CUDA 二進位檔（aeqts.cu 編譯產生），
+無 CUDA binary 時自動 fallback 至純 Python 實作。"""
+import json
+import os
+import shutil
+import subprocess
 import time
 from math import sqrt
-from typing import Callable, Dict, Any, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import numpy as np
 
-# ── GPU 自動偵測 ──────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════
+#  CUDA binary 封裝層
+# ══════════════════════════════════════════════════════════════════
+
+_BINARY_NAME = "solve_cuda"
+
+def _find_binary() -> Optional[str]:
+    """搜尋編譯完成的 solve_cuda 二進位檔（開發機 / Docker 兩種路徑）。"""
+    here = os.path.dirname(os.path.abspath(__file__))
+    candidates = [
+        os.path.join(here, "..", _BINARY_NAME),   # backend/solve_cuda（開發）
+        os.path.join("/app", _BINARY_NAME),        # Docker /app/solve_cuda
+        shutil.which(_BINARY_NAME) or "",          # PATH
+    ]
+    for p in candidates:
+        if p and os.path.isfile(p) and os.access(p, os.X_OK):
+            return os.path.abspath(p)
+    return None
+
+
+def is_cuda_available() -> bool:
+    """回傳 True 代表 solve_cuda binary 存在且可執行。"""
+    return _find_binary() is not None
+
+
+def cuda_knapsack_solver(
+    weights: List[float],
+    values: List[float],
+    capacity: float,
+    penalty: float,
+    N: int = 50,
+    num_iterations: int = 1000,
+    seed: Optional[int] = None,
+) -> Dict[str, Any]:
+    """
+    呼叫 CUDA binary（solve_cuda）執行 knapsack AEQTS 求解。
+
+    Returns:
+        同 aeqts_solver 相同結構的 dict：
+        {solution, energy, history, computation_time_ms, device}
+    """
+    binary = _find_binary()
+    if binary is None:
+        raise RuntimeError(
+            "solve_cuda binary not found. "
+            "Build aeqts.cu first: nvcc -O3 -std=c++17 aeqts.cu -o solve_cuda"
+        )
+
+    cmd = [
+        binary,
+        "--weights",    ",".join(f"{float(w)}" for w in weights),
+        "--values",     ",".join(f"{float(v)}" for v in values),
+        "--capacity",   str(float(capacity)),
+        "--penalty",    str(float(penalty)),
+        "--population", str(int(N)),
+        "--iterations", str(int(num_iterations)),
+    ]
+    if seed is not None:
+        cmd.extend(["--seed", str(int(seed))])
+
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"solve_cuda exited with code {proc.returncode}:\n{proc.stderr}"
+        )
+
+    raw = json.loads(proc.stdout)
+
+    # 統一輸出格式（solver.py history 欄位使用 "objective" key，router/worker 讀取相同）
+    return {
+        "solution"            : raw["solution"],
+        "energy"              : raw["energy"],
+        "history"             : raw["history"],   # [{iteration, energy, current_energy, objective, entropy, is_feasible}]
+        "computation_time_ms" : raw["computation_time_ms"],
+        "device"              : "cuda",
+    }
+
+
+# ══════════════════════════════════════════════════════════════════
+#  Python fallback（GPU 自動偵測 CuPy / 退回 numpy）
+# ══════════════════════════════════════════════════════════════════
+
+# ── CuPy 自動偵測 ────────────────────────────────────────────────
 try:
     import cupy as cp
     _GPU_AVAILABLE: bool = cp.cuda.is_available()
@@ -164,11 +251,12 @@ def aeqts_solver(
             is_feasible = bool(feasibility_checker(sol_np)) if feasibility_checker else None
             obj_val     = float(objective_fn(sol_np)) if objective_fn else best_energy
             history.append({
-                "iteration"  : it,
-                "energy"     : best_energy,
-                "objective"  : obj_val,
-                "entropy"    : current_entropy,
-                "is_feasible": is_feasible,
+                "iteration"     : it,
+                "energy"        : best_energy,    # 目前最佳 QUBO 能量（running best）
+                "current_energy": this_energy,    # 當前迭代的最佳候選能量（每次都變）
+                "objective"     : obj_val,
+                "entropy"       : current_entropy,
+                "is_feasible"   : is_feasible,
             })
 
         # entropy 提前停止（同原始腳本）
@@ -180,11 +268,12 @@ def aeqts_solver(
     is_feasible_final = bool(feasibility_checker(sol_np_final)) if feasibility_checker else None
     obj_val_final     = float(objective_fn(sol_np_final)) if objective_fn else best_energy
     history.append({
-        "iteration"  : num_iterations,
-        "energy"     : best_energy,
-        "objective"  : obj_val_final,
-        "entropy"    : _entropy(alpha, beta, xp),
-        "is_feasible": is_feasible_final,
+        "iteration"     : num_iterations,
+        "energy"        : best_energy,
+        "current_energy": best_energy,   # 結束時 current = best
+        "objective"     : obj_val_final,
+        "entropy"       : _entropy(alpha, beta, xp),
+        "is_feasible"   : is_feasible_final,
     })
 
     computation_time_ms = (time.time() - start_time) * 1000

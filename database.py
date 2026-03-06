@@ -44,7 +44,8 @@ class JobHistory(Base):
     job_id = Column(String(36), ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False)
     iteration = Column(Integer, nullable=False)
     value = Column(Float, nullable=False)
-    entropy = Column(Float, nullable=True)   # AEQTS Q-bit 族群 entropy
+    qubo_energy = Column(Float, nullable=True)    # 當前迭代最佳候選的 QUBO 能量
+    entropy = Column(Float, nullable=True)        # AEQTS Q-bit 族群 entropy
     is_feasible = Column(Boolean, nullable=True)  # 該迭代的最佳解是否滿足約束
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
@@ -71,11 +72,15 @@ def init_db():
     Base.metadata.create_all(bind=engine)
     # 安全地為舊資料庫補上 compute_device 欄位（已存在時忽略）
     with engine.connect() as conn:
-        try:
-            conn.execute(text("ALTER TABLE jobs ADD COLUMN compute_device VARCHAR(10)"))
-            conn.commit()
-        except Exception:
-            pass  # 欄位已存在，忽略
+        for ddl in [
+            "ALTER TABLE jobs ADD COLUMN compute_device VARCHAR(10)",
+            "ALTER TABLE job_history ADD COLUMN qubo_energy FLOAT",
+        ]:
+            try:
+                conn.execute(text(ddl))
+                conn.commit()
+            except Exception:
+                pass  # 欄位已存在，忽略
     print("✓ Database tables initialized")
 
 

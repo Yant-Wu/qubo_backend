@@ -27,8 +27,9 @@ class HistoryPoint(BaseModel):
     """單一歷史點 (iteration + value)。"""
     iteration: int
     value: float
-    entropy: Optional[float] = None   # AEQTS Q-bit entropy
-    is_feasible: Optional[bool] = None  # 該迭代最佳解是否滿足約束
+    qubo_energy: Optional[float] = None  # 當前迭代最佳候選的 QUBO 能量
+    entropy: Optional[float] = None      # AEQTS Q-bit entropy
+    is_feasible: Optional[bool] = None   # 該迭代最佳解是否滿足約束
 
 
 class HistoryPointCreate(BaseModel):
@@ -57,6 +58,10 @@ class ProblemData(BaseModel):
     items: Optional[List[KnapsackItemData]] = Field(default=None, description="Knapsack 物品清單")
     capacity: Optional[float] = Field(default=None, gt=0, description="Knapsack 容量（必須 > 0）")
     penalty: Optional[float] = Field(default=None, gt=0, description="Knapsack 懲罰係數（必須 > 0，否則約束無效）")
+    # 求解結果（存回 DB，刷新後仍可讀取）
+    selected_items: Optional[List[KnapsackItemData]] = Field(default=None, description="已選取的物品清單")
+    total_value: Optional[float] = Field(default=None, description="最佳解總價值")
+    total_weight: Optional[float] = Field(default=None, description="最佳解總重量")
 
 
 # ============ Job CRUD ============

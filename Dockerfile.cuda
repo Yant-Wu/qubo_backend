@@ -1,10 +1,13 @@
-# backend/Dockerfile.cuda — GPU 加速版後端（CUDA 12.4 + CuPy）
+# backend/Dockerfile.cuda — GPU 加速版後端（CUDA 12.4 devel + aeqts.cu 編譯）
+#
+# 使用 devel 映像（含 nvcc）在建置時期編譯 aeqts.cu → /app/solve_cuda
+# FastAPI worker 優先呼叫 solve_cuda binary；無 GPU 時自動 fallback 至 Python AEQTS
 #
 # Build（推到 Docker Hub）:
 #   docker buildx build --platform linux/amd64 \
 #     -f Dockerfile.cuda -t yantwu/qubo-backend:gpu-latest ./backend --push
 #
-# 本機測試（需先 docker buildx build --load）:
+# 本機測試:
 #   docker build -f Dockerfile.cuda -t qubo-backend:gpu .
 #   docker run --gpus all -p 8000:8000 qubo-backend:gpu
 #
@@ -12,6 +15,23 @@
 #   - NVIDIA driver >= 550（支援 CUDA 12.4）
 #   - NVIDIA Container Toolkit（sudo apt install nvidia-docker2）
 
+# ── Stage 1: 編譯 CUDA binary ────────────────────────────────────────────────
+FROM nvidia/cuda:12.4.1-devel-ubuntu22.04 AS cuda-builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# 安裝編譯工具
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+COPY aeqts.cu .
+
+# 編譯 CUDA binary（-arch=sm_75 涵蓋 Turing+ GPU；可用 -arch=native 或依需求調整）
+RUN nvcc -O3 -std=c++17 -arch=sm_75 aeqts.cu -o solve_cuda
+
+# ── Stage 2: 執行期映像（runtime 較小，含 CUDA 動態函式庫）────────────────────
 FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -31,11 +51,12 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev
 
-# 安裝 CuPy（CUDA 12.x），pyproject.toml 未列入以免 macOS 開發機鎖定失敗
-# uv 建立的 venv 沒有 pip，改用 uv pip install（自動偵測 /app/.venv）
-RUN VIRTUAL_ENV=/app/.venv uv pip install --no-cache "cupy-cuda12x>=13.0"
 # 複製後端原始碼
 COPY . .
+
+# 從 builder stage 複製編譯好的 binary
+COPY --from=cuda-builder /build/solve_cuda /app/solve_cuda
+RUN chmod +x /app/solve_cuda
 
 # 建立 SQLite 資料庫目錄
 RUN mkdir -p /app/database

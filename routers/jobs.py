@@ -6,6 +6,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 import store
 from database import get_db
@@ -151,14 +152,25 @@ async def solve_and_create(req: JobCreateRequest, db: Session = Depends(get_db))
         for it, xi in zip(raw_items, solution)
         if xi
     ]
+    total_value  = sum(float(it["value"])  for it in selected)
+    total_weight = sum(float(it["weight"]) for it in selected)
+
+    # 將求解結果存回資料庫（不需要新層資料表）
+    pd = dict(job_orm.problem_data or {})
+    pd["selected_items"] = selected
+    pd["total_value"]    = total_value
+    pd["total_weight"]   = total_weight
+    job_orm.problem_data = pd
+    flag_modified(job_orm, "problem_data")
+    db.commit()
 
     return ApiResponse(
         data=SolveAndCreateResponse(
             job_id=job_id,
             energy=best_result["energy"],
             selected_items=selected,
-            total_value=sum(float(it["value"]) for it in selected),
-            total_weight=sum(float(it["weight"]) for it in selected),
+            total_value=total_value,
+            total_weight=total_weight,
             computation_time_ms=best_result["computation_time_ms"],
             device=best_result.get("device", "cpu"),
         ),

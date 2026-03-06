@@ -87,7 +87,7 @@ def add_history_points(db: Session, job_id: str, points: List[HistoryPoint]) -> 
 def get_history_points(db: Session, job_id: str) -> List[HistoryPoint]:
     """獲取任務的所有歷史點。"""
     points = db.query(JobHistory).filter(JobHistory.job_id == job_id).order_by(JobHistory.iteration).all()
-    return [HistoryPoint(iteration=p.iteration, value=p.value, entropy=p.entropy, is_feasible=p.is_feasible) for p in points]
+    return [HistoryPoint(iteration=p.iteration, value=p.value, qubo_energy=p.qubo_energy, entropy=p.entropy, is_feasible=p.is_feasible) for p in points]
 
 
 # ============ 內部輔助 ============

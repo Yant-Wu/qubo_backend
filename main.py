@@ -17,8 +17,6 @@ from config import CORS_ORIGINS, HOST, PORT, RELOAD, WORKER_CHECK_INTERVAL, WORK
 from utils import free_port
 from database import init_db
 from routers import jobs
-from routers import qubo
-from routers import solve
 from worker import process_pending_jobs
 
 # ============ 全局變量 ============
@@ -77,8 +75,6 @@ app.add_middleware(
 
 # ============ 路由註冊 ============
 app.include_router(jobs.router)
-app.include_router(qubo.router)
-app.include_router(solve.router)
 
 
 # ============ 健康檢查端點 ============
