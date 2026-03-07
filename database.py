@@ -47,6 +47,7 @@ class JobHistory(Base):
     qubo_energy = Column(Float, nullable=True)    # 當前迭代最佳候選的 QUBO 能量
     entropy = Column(Float, nullable=True)        # AEQTS Q-bit 族群 entropy
     is_feasible = Column(Boolean, nullable=True)  # 該迭代的最佳解是否滿足約束
+    qubit_probs = Column(JSON, nullable=True)     # 各 qubit 的 P(=1)=β²，供 Qubit Probability Monitor 使用
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
@@ -75,6 +76,7 @@ def init_db():
         for ddl in [
             "ALTER TABLE jobs ADD COLUMN compute_device VARCHAR(10)",
             "ALTER TABLE job_history ADD COLUMN qubo_energy FLOAT",
+            "ALTER TABLE job_history ADD COLUMN qubit_probs JSON",
         ]:
             try:
                 conn.execute(text(ddl))

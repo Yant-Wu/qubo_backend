@@ -250,6 +250,7 @@ def aeqts_solver(
             sol_np = _to_np(best_sol, xp)
             is_feasible = bool(feasibility_checker(sol_np)) if feasibility_checker else None
             obj_val     = float(objective_fn(sol_np)) if objective_fn else best_energy
+            qubit_probs = _to_np(beta ** 2, xp).tolist()  # β² = P(qubit=1) for each qubit
             history.append({
                 "iteration"     : it,
                 "energy"        : best_energy,    # 目前最佳 QUBO 能量（running best）
@@ -257,6 +258,7 @@ def aeqts_solver(
                 "objective"     : obj_val,
                 "entropy"       : current_entropy,
                 "is_feasible"   : is_feasible,
+                "qubit_probs"   : qubit_probs,    # P(qubit_i=1) for Qubit Probability Monitor
             })
 
         # entropy 提前停止（同原始腳本）
@@ -267,6 +269,7 @@ def aeqts_solver(
     sol_np_final      = _to_np(best_sol, xp)
     is_feasible_final = bool(feasibility_checker(sol_np_final)) if feasibility_checker else None
     obj_val_final     = float(objective_fn(sol_np_final)) if objective_fn else best_energy
+    final_qubit_probs = _to_np(beta ** 2, xp).tolist()
     history.append({
         "iteration"     : num_iterations,
         "energy"        : best_energy,
@@ -274,6 +277,7 @@ def aeqts_solver(
         "objective"     : obj_val_final,
         "entropy"       : _entropy(alpha, beta, xp),
         "is_feasible"   : is_feasible_final,
+        "qubit_probs"   : final_qubit_probs,
     })
 
     computation_time_ms = (time.time() - start_time) * 1000
@@ -285,79 +289,3 @@ def aeqts_solver(
         "computation_time_ms": round(computation_time_ms, 2),
         "device"             : device,
     }
-
-
-# ─────────────────────────────────────────────
-#  保留 SA（供 multi_run_solver 使用）
-# ─────────────────────────────────────────────
-
-def simulated_annealing_solver(
-    Q: np.ndarray,
-    num_iterations: int = 10000,
-    T_start: float = 10.0,
-    T_end: float = 0.01,
-    seed: int = None,
-    feasibility_checker: Optional[Callable[[np.ndarray], bool]] = None,
-) -> Dict[str, Any]:
-    """模擬退火求解器（備用）。"""
-    from .builder import calculate_energy
-
-    if seed is not None:
-        np.random.seed(seed)
-
-    start_time = time.time()
-    n = Q.shape[0]
-
-    x_current = np.random.randint(0, 2, size=n).astype(float)
-    E_current = calculate_energy(x_current, Q)
-    x_best, E_best = x_current.copy(), E_current
-
-    record_interval = max(1, num_iterations // 100)
-    alpha = (T_end / T_start) ** (1.0 / num_iterations)
-    T = T_start
-    history = []
-
-    for iteration in range(num_iterations):
-        flip_idx = np.random.randint(0, n)
-        x_new = x_current.copy()
-        x_new[flip_idx] = 1 - x_new[flip_idx]
-
-        delta_E = calculate_energy_flip(x_current, Q, flip_idx)
-        E_new = E_current + delta_E
-
-        if delta_E < 0 or np.random.rand() < np.exp(-delta_E / T):
-            x_current, E_current = x_new, E_new
-
-        if E_current < E_best:
-            x_best, E_best = x_current.copy(), E_current
-
-        if iteration % record_interval == 0:
-            is_feasible = bool(feasibility_checker(x_best)) if feasibility_checker else None
-            history.append({"iteration": iteration, "energy": float(E_best),
-                            "temperature": float(T), "is_feasible": is_feasible})
-        T *= alpha
-
-    is_feasible_final = bool(feasibility_checker(x_best)) if feasibility_checker else None
-    history.append({"iteration": num_iterations, "energy": float(E_best),
-                    "temperature": float(T), "is_feasible": is_feasible_final})
-
-    return {
-        "solution": x_best.astype(int).tolist(),
-        "energy": float(E_best),
-        "history": history,
-        "computation_time_ms": round((time.time() - start_time) * 1000, 2),
-    }
-
-
-def calculate_energy_flip(x: np.ndarray, Q: np.ndarray, flip_idx: int) -> float:
-    """計算翻轉單個比特後的能量變化（優化版）。"""
-    i = flip_idx
-    n = len(x)
-    delta = Q[i, i]
-    for j in range(n):
-        if j != i:
-            delta += (Q[i, j] if j > i else Q[j, i]) * x[j]
-    delta *= 2
-    if x[i] == 1:
-        delta = -delta
-    return delta

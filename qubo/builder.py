@@ -1,4 +1,5 @@
 """QUBO 矩陣構建器 - 將問題轉換為 Q 矩陣"""
+import math
 import numpy as np
 from typing import Dict, List, Any
 
@@ -52,26 +53,30 @@ def build_knapsack_qubo(data: Dict[str, Any]) -> np.ndarray:
     penalty = data.get("penalty", 10.0)
     
     n = len(items)
-    Q = np.zeros((n, n))
-    
-    # 目標：最大化價值 → 最小化負價值
+
+    # Slack variables：將 Σw_i x_i ≤ C 轉成 Σw_i x_i + Σ2^k s_k = C
+    # K 由使用者設定，未設定則自動推算 ⌈log2(C+1)⌉
+    auto_K = max(1, math.ceil(math.log2(max_weight + 1))) if max_weight > 0 else 1
+    K = int(data.get("slack_bits") or auto_K)
+    if K < 1:
+        raise ValueError("slack_bits 必須 ≥ 1")
+    total = n + K
+    Q = np.zeros((total, total))
+
+    # 目標：最大化價值 → 最小化負價值（只作用在前 n 個物品變數）
     for i in range(n):
         Q[i, i] -= items[i]["value"]
-    
-    # 約束：(Σ weight_i * x_i - max_weight)^2
-    # 展開：Σ w_i^2 * x_i + 2 * Σ Σ (i<j) w_i * w_j * x_i * x_j - 2 * max_weight * Σ w_i * x_i + max_weight^2
-    for i in range(n):
-        w_i = items[i]["weight"]
-        # 對角線項：w_i^2 * x_i - 2 * max_weight * w_i * x_i
-        Q[i, i] += penalty * (w_i ** 2 - 2 * max_weight * w_i)
-        
-        # 非對角線項：2 * w_i * w_j * x_i * x_j
-        for j in range(i + 1, n):
-            w_j = items[j]["weight"]
-            Q[i, j] += penalty * 2 * w_i * w_j
-    
-    # 常數項 (penalty * max_weight^2) 不影響最優解，可忽略
-    
+
+    # 約束係數：物品用 weight，slack 用 2^k
+    coeffs = [float(items[i]["weight"]) for i in range(n)] + [float(2 ** k) for k in range(K)]
+
+    # 展開 penalty * (Σ coeffs[i]*y_i - C)^2
+    for i in range(total):
+        Q[i, i] += penalty * (coeffs[i] ** 2 - 2 * max_weight * coeffs[i])
+        for j in range(i + 1, total):
+            Q[i, j] += penalty * 2 * coeffs[i] * coeffs[j]
+
+    # 常數項 (penalty * C^2) 不影響最優解，可忽略
     return Q
 
 
@@ -97,6 +102,10 @@ def build_max_cut_qubo(data: Dict[str, Any]) -> np.ndarray:
     n_nodes = data.get("nodes")
     if n_nodes is None:
         raise ValueError("max_cut 問題缺少必要欄位: nodes")
+    if not isinstance(n_nodes, int) or n_nodes < 1:
+        raise ValueError("nodes 必須為正整數")
+    if n_nodes > 500:
+        raise ValueError("nodes 不可超過 500")
     edges = data.get("edges")
     if edges is None:
         raise ValueError("max_cut 問題缺少必要欄位: edges")
@@ -104,7 +113,9 @@ def build_max_cut_qubo(data: Dict[str, Any]) -> np.ndarray:
     Q = np.zeros((n_nodes, n_nodes))
     
     for edge in edges:
-        i, j = edge["from"], edge["to"]
+        i, j = int(edge["from"]), int(edge["to"])
+        if not (0 <= i < n_nodes and 0 <= j < n_nodes):
+            raise ValueError(f"edge 索引 ({i}, {j}) 超出節點範圍 [0, {n_nodes})")
         weight = edge["weight"]
         
         # 確保 i < j（上三角矩陣）
@@ -137,31 +148,27 @@ def build_custom_qubo(data: Dict[str, Any]) -> np.ndarray:
     Q_matrix = data.get("Q_matrix")
     if Q_matrix is None:
         raise ValueError("custom 類型需要提供 Q_matrix")
-    
+
+    if not Q_matrix:
+        raise ValueError("Q_matrix 不可為空")
+
+    n = len(Q_matrix)
+    for i, row in enumerate(Q_matrix):
+        if not isinstance(row, (list, tuple)):
+            raise ValueError(f"Q_matrix 第 {i} 行不是陣列")
+        if len(row) != n:
+            raise ValueError(f"Q_matrix 不是方陣：第 {i} 行長度 {len(row)} ≠ {n}")
+
     Q = np.array(Q_matrix, dtype=float)
     
     # 確保是方陣
     if Q.shape[0] != Q.shape[1]:
         raise ValueError(f"Q_matrix 必須是方陣，當前形狀: {Q.shape}")
     
-    # 轉換為上三角矩陣（QUBO 標準形式）
-    Q = np.triu(Q) + np.triu(Q, k=1).T
-    Q = np.triu(Q)
+    # 對稱化：若輸入只有上三角或只有下三角，補齊另一側後直接回傳完整對稱矩陣。
+    # 對稱矩陣的 x^T Q x = Σ Q_ii x_i + 2*Σ_{i<j} Q_ij x_i x_j，
+    # solver 的 x @ Q @ x 計算方式與此完全一致，不需縮減為上三角。
+    Q = (Q + Q.T) / 2
     
     return Q
 
-
-def calculate_energy(x: np.ndarray, Q: np.ndarray) -> float:
-    """
-    計算給定解的能量值。
-    
-    E(x) = x^T * Q * x
-    
-    Args:
-        x: 解向量 (0/1)
-        Q: QUBO 矩陣
-    
-    Returns:
-        energy: 能量值
-    """
-    return float(x.T @ Q @ x)

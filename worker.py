@@ -6,6 +6,7 @@ from typing import Any, Dict
 
 from sqlalchemy.orm import Session
 
+from sqlalchemy.orm.attributes import flag_modified
 from database import Job, JobHistory, SessionLocal
 from schemas import HistoryPoint
 from qubo import build_qubo_matrix, aeqts_solver
@@ -51,9 +52,10 @@ def process_pending_jobs():
             except Exception as e:
                 # 4. 失敗：標記為 failed
                 job.status = "failed"
-                job.error_message = str(e)
+                # 只保留簡短型別訊息，避免內部路徑/堆疊資訊外洩
+                job.error_message = type(e).__name__
                 db.commit()
-                print(f"[worker] Job {job.id} → failed: {e}")
+                print(f"[worker] Job {job.id} → failed: {type(e).__name__}")
     
     finally:
         db.close()
@@ -123,6 +125,7 @@ def _simulate_job(db: Session, job: Job):
     # 相容處理：前端可能存 capacity，builder 需要 max_weight
     if qubo_type == "knapsack" and "max_weight" not in raw and "capacity" in raw:
         raw["max_weight"] = raw["capacity"]
+    # slack_bits 已在 raw 中，build_knapsack_qubo 會自行讀取
 
     Q = feasibility_checker = objective_fn = None
     if not (qubo_type == "knapsack" and is_cuda_available()):
@@ -131,7 +134,8 @@ def _simulate_job(db: Session, job: Job):
         objective_fn = _make_objective_fn(qubo_type, raw)
 
     # --- 4. 決定求解參數 ---
-    n_vars = len(raw.get("items", [])) if qubo_type == "knapsack" else (Q.shape[0] if Q is not None else 0)
+    # Python knapsack 路徑：Q 已含 slack vars，取 Q.shape[0]；CUDA 路徑 Q=None，取物品數
+    n_vars = Q.shape[0] if Q is not None else len(raw.get("items", []))
     N = int(job.core_limit or 50)          # 鄰域大小（前端 Neighbors N）
     num_iterations = int(user_num_iterations) if user_num_iterations else max(1000, n_vars * 100)
     timeout_secs = float(user_timeout) if user_timeout else 30.0
@@ -154,7 +158,7 @@ def _simulate_job(db: Session, job: Job):
             result = cuda_knapsack_solver(
                 weights=_weights, values=_values,
                 capacity=_capacity, penalty=_penalty,
-                N=N, num_iterations=num_iterations, seed=run,
+                N=N, num_iterations=num_iterations, seed=None,
             )
             run += 1
             if result["energy"] < best_energy:
@@ -169,7 +173,7 @@ def _simulate_job(db: Session, job: Job):
                 Q=Q,
                 num_iterations=num_iterations,
                 N=N,
-                seed=run,
+                seed=None,
                 feasibility_checker=feasibility_checker,
                 objective_fn=objective_fn,
             )
@@ -180,7 +184,7 @@ def _simulate_job(db: Session, job: Job):
             if (_time.time() - run_start) >= timeout_secs:
                 break
 
-    # --- 5. 將 objective + entropy + is_feasible 歷史寫入 JobHistory ---
+    # --- 5. 將 objective + entropy + is_feasible + qubit_probs 歷史寫入 JobHistory ---
     for point in best_result["history"]:
         db.add(JobHistory(
             job_id=job.id,
@@ -189,6 +193,7 @@ def _simulate_job(db: Session, job: Job):
             qubo_energy=round(point["current_energy"], 6) if point.get("current_energy") is not None else None,
             entropy=round(point["entropy"], 6) if point.get("entropy") is not None else None,
             is_feasible=point.get("is_feasible"),
+            qubit_probs=point.get("qubit_probs"),      # P(qubit_i=1)=β²，供 Qubit Probability Monitor
         ))
 
     # --- 6. 更新 Job 的求解統計欄位 ---
@@ -196,6 +201,34 @@ def _simulate_job(db: Session, job: Job):
     job.t_start = float(N)              # 儲存鄰域大小 N
     job.t_end = float(num_iterations)   # 儲存迭代次數
     job.compute_device = "gpu" if best_result.get("device") in ("gpu", "cuda") else "cpu"
+    # 更新 n_variables 為真實 QUBO 維度（含 slack vars）
+    if Q is not None:
+        job.n_variables = int(Q.shape[0])
+        # 記錄 slack variable 數量，前端可用於顯示
+        n_items = len(raw.get("items", [])) if qubo_type == "knapsack" else 0
+        n_slack = int(Q.shape[0]) - n_items
+        if n_slack > 0:
+            _pd = dict(job.problem_data or {})
+            _pd["n_slack"] = n_slack
+            job.problem_data = _pd
+            flag_modified(job, "problem_data")
+
+    # --- 7. knapsack: 存 selected_items / total_value / total_weight 至 problem_data ---
+    if qubo_type == "knapsack":
+        items_list = raw.get("items", [])
+        solution   = best_result.get("solution", [])
+        selected   = [
+            {"name": it["name"], "weight": it["weight"], "value": it["value"]}
+            for it, xi in zip(items_list, solution)
+            if xi
+        ]
+        _pd3 = dict(job.problem_data or {})
+        _pd3["selected_items"] = selected
+        _pd3["total_value"]    = round(sum(float(s["value"])  for s in selected), 6)
+        _pd3["total_weight"]   = round(sum(float(s["weight"]) for s in selected), 6)
+        job.problem_data = _pd3
+        flag_modified(job, "problem_data")
+
     db.commit()
     return best_result
 

@@ -27,9 +27,10 @@ class HistoryPoint(BaseModel):
     """單一歷史點 (iteration + value)。"""
     iteration: int
     value: float
-    qubo_energy: Optional[float] = None  # 當前迭代最佳候選的 QUBO 能量
-    entropy: Optional[float] = None      # AEQTS Q-bit entropy
-    is_feasible: Optional[bool] = None   # 該迭代最佳解是否滿足約束
+    qubo_energy: Optional[float] = None       # 當前迭代最佳候選的 QUBO 能量
+    entropy: Optional[float] = None           # AEQTS Q-bit entropy
+    is_feasible: Optional[bool] = None        # 該迭代最佳解是否滿足約束
+    qubit_probs: Optional[List[float]] = None # P(qubit_i=1)=β²，供 Qubit Probability Monitor 顯示
 
 
 class HistoryPointCreate(BaseModel):
@@ -40,7 +41,7 @@ class HistoryPointCreate(BaseModel):
 # ============ 問題資料 ============
 class KnapsackItemData(BaseModel):
     """背包問題的單一物品。"""
-    name: str
+    name: str = Field(..., max_length=255)
     weight: float = Field(..., ge=0, description="物品重量（不可為負）")
     value: float  = Field(..., ge=0, description="物品價值（不可為負）")
 
@@ -49,7 +50,7 @@ class ProblemData(BaseModel):
     """問題參數。"""
     generation_method: str = "random"  # random, upload
     seed: Optional[int] = None
-    filename: Optional[str] = None
+    filename: Optional[str] = Field(default=None, max_length=512)
     n_variables: Optional[int] = Field(default=None, ge=1, description="隨機生成時的變數數量（物品數 / 節點數）")
     num_iterations: Optional[int] = Field(default=None, ge=1, description="AEQTS 迭代次數")
     timeout_seconds: Optional[float] = Field(default=None, gt=0, description="執行時限（秒）")
@@ -67,7 +68,7 @@ class ProblemData(BaseModel):
 # ============ Job CRUD ============
 class JobCreateRequest(BaseModel):
     """POST /api/jobs 的請求格式。"""
-    task_name: str = Field(..., min_length=1)
+    task_name: str = Field(..., min_length=1, max_length=255)
     problem_type: str  # TSP, MaxCut, Knapsack
     n_variables: int = Field(..., ge=1)
     solver_backend: str  # exact, simulated_annealing, quantum_annealing
