@@ -1,0 +1,12 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "/^cd \"/Users/yanwu/Desktop/實驗室/ai 比賽/backend\" && source \\.venv/bin/activate && python3 -c \"\nfrom database import SessionLocal, Job, JobHistory\ndb = SessionLocal\\(\\)\njobs = db\\.query\\(Job\\)\\.order_by\\(Job\\.created_at\\.desc\\(\\)\\)\\.limit\\(3\\)\\.all\\(\\)\nfor j in jobs:\n    cnt = db\\.query\\(JobHistory\\)\\.filter\\(JobHistory\\.job_id == j\\.id\\)\\.count\\(\\)\n    print\\(f'id=\\{j\\.id\\[:8\\]\\} status=\\{j\\.status\\} history_count=\\{cnt\\}'\\)\ndb\\.close\\(\\)\n\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^cd \"/Users/yanwu/Desktop/實驗室/ai 比賽/backend\" && source \\.venv/bin/activate && python3 -c \"\nfrom database import SessionLocal, Job, JobHistory\ndb = SessionLocal\\(\\)\nj = db\\.query\\(Job\\)\\.order_by\\(Job\\.created_at\\.desc\\(\\)\\)\\.first\\(\\)\npts = db\\.query\\(JobHistory\\)\\.filter\\(JobHistory\\.job_id == j\\.id\\)\\.order_by\\(JobHistory\\.iteration\\)\\.limit\\(10\\)\\.all\\(\\)\nfor p in pts:\n    print\\(f'iter=\\{p\\.iteration\\} value=\\{p\\.value\\} qubo=\\{p\\.qubo_energy\\}'\\)\nprint\\('\\.\\.\\.'\\)\npts2 = db\\.query\\(JobHistory\\)\\.filter\\(JobHistory\\.job_id == j\\.id\\)\\.order_by\\(JobHistory\\.iteration\\.desc\\(\\)\\)\\.limit\\(5\\)\\.all\\(\\)\nfor p in reversed\\(pts2\\):\n    print\\(f'iter=\\{p\\.iteration\\} value=\\{p\\.value\\} qubo=\\{p\\.qubo_energy\\}'\\)\ndb\\.close\\(\\)\n\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
+}
