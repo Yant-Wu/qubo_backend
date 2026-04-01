@@ -56,7 +56,7 @@ class ProblemData(BaseModel):
     timeout_seconds: Optional[float] = Field(default=None, gt=0, description="執行時限（秒）")
     Q_matrix: Optional[List[List[float]]] = Field(default=None, max_length=500, description="自訂 QUBO 矩陣（custom 類型，最多 500×500）")
     # Knapsack 問題前端表單紀錄（供「套用此設定」還原用）
-    items: Optional[List[KnapsackItemData]] = Field(default=None, max_length=500, description="Knapsack 物品清單（最多 500 項）")
+    items: Optional[List[KnapsackItemData]] = Field(default=None, max_length=10000, description="Knapsack 物品清單（最多 500 項）")
     capacity: Optional[float] = Field(default=None, gt=0, description="Knapsack 容量（必須 > 0）")
     penalty: Optional[float] = Field(default=None, gt=0, description="Knapsack 懲罰係數（必須 > 0，否則約束無效）")
     # 求解結果（存回 DB，刷新後仍可讀取）

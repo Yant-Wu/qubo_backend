@@ -14,3 +14,13 @@ database/
 
 # Virtual environments
 .venv
+
+
+# garbage*.log
+*.tmp
+qubo/.DS_Store
+.DS_Store
+
+# test
+knapsack_500.py
+knapsack_500_items.csv
